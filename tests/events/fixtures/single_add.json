@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "commit": "abc1234abcdef",
+  "parent": "0000000000000",
+  "timestamp": "2026-01-15T10:00:00Z",
+  "added": [
+    {
+      "id": "aaaabbbbccccddddeeeeffffgggghhhh",
+      "rule": "ts:2304",
+      "file": "src/foo.ts",
+      "line": 42,
+      "message": "Cannot find name 'bar'."
+    }
+  ],
+  "removed": []
+}

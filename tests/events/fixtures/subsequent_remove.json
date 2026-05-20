@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "commit": "def5678defghi",
+  "parent": "abc1234abcdef",
+  "timestamp": "2026-01-15T11:00:00Z",
+  "added": [],
+  "removed": ["aaaabbbbccccddddeeeeffffgggghhhh"]
+}

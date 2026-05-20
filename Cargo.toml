@@ -1,0 +1,51 @@
+[package]
+name = "gradual"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "gradual"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+tree-sitter = "0.22"
+tree-sitter-typescript = "0.21"
+path-slash = "0.2"
+walkdir = "2"
+wait-timeout = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+
+[[test]]
+name = "hasher_tests"
+path = "tests/identity/hasher_tests.rs"
+
+[[test]]
+name = "fold_tests"
+path = "tests/events/fold_tests.rs"
+
+[[test]]
+name = "typescript_tests"
+path = "tests/analyzers/typescript_tests.rs"
+
+[[test]]
+name = "eslint_tests"
+path = "tests/analyzers/eslint_tests.rs"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# These are not useful for a binary with no public API docs.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
