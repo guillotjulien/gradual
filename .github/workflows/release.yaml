@@ -111,7 +111,14 @@ jobs:
         shell: bash
         run: |
           cd npm/app
-          npm install --no-package-lock --ignore-scripts --no-fund --omit=optional
+          # 1. Temporarily strip our unreleased binaries from package.json
+          npm pkg delete optionalDependencies
+          
+          # 2. Install dependencies (WITHOUT --omit=optional, so TS gets its binaries)
+          npm install --no-package-lock --ignore-scripts --no-fund
+          
+          # 3. Restore the package.json so the final publish includes our binaries
+          git checkout package.json
           npm run build
           npm stage publish --access public --provenance
         env:
