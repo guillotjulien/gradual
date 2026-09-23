@@ -19,8 +19,11 @@ struct EslintMessage {
     #[serde(rename = "ruleId")]
     rule_id: Option<String>,
     message: String,
-    line: u32,
-    column: u32,
+    // Fatal messages (e.g. parse errors) omit position, so these are optional.
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    column: Option<u32>,
 }
 
 enum EslintVersion {
@@ -68,6 +71,14 @@ pub fn run_eslint(
     let mut cmd = Command::new(&bin_path);
     cmd.args(["--format", "json"]);
 
+    // Persist eslint's per-file cache across runs. Sound because lint rules are
+    // file-local: unchanged files are skipped. Best-effort dir creation.
+    let cache_dir = repo_root.join(".gradual/cache");
+    std::fs::create_dir_all(&cache_dir).ok();
+    cmd.arg("--cache")
+        .arg("--cache-location")
+        .arg(cache_dir.join(".eslintcache"));
+
     match version {
         EslintVersion::V8 => {
             cmd.arg("--no-eslintrc");
@@ -83,7 +94,20 @@ pub fn run_eslint(
             }
         }
     }
-    cmd.arg(repo_root).current_dir(repo_root);
+    // Scope eslint to the configured paths (like betterer's `.include(...)`) so it
+    // never lints build output such as `dist/`. Excludes become ignore patterns.
+    // With no `include`, fall back to linting the whole repo.
+    for pat in &config.exclude {
+        cmd.args(["--ignore-pattern", pat]);
+    }
+    if config.include.is_empty() {
+        cmd.arg(repo_root);
+    } else {
+        for pat in &config.include {
+            cmd.arg(pat);
+        }
+    }
+    cmd.current_dir(repo_root);
 
     let output = run_command(&mut cmd, timeout).with_context(|| {
         format!(
@@ -130,8 +154,8 @@ pub fn run_eslint(
             findings.push(RawFinding {
                 rule: format!("eslint:{rule_id}"),
                 file: PathBuf::from(&file.file_path),
-                line: msg.line,
-                column: msg.column,
+                line: msg.line.unwrap_or(1),
+                column: msg.column.unwrap_or(1),
                 message: msg.message,
             });
         }

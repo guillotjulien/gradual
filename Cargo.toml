@@ -13,13 +13,12 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
-tree-sitter = "0.22"
-tree-sitter-typescript = "0.21"
 path-slash = "0.2"
 walkdir = "2"
 wait-timeout = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
+globset = "0.4"
 
 [[test]]
 name = "hasher_tests"

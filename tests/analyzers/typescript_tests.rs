@@ -22,6 +22,8 @@ fn test_config() -> GradualConfig {
         tsconfig: "tsconfig.json".to_string(),
         eslint_config: None,
         events_dir: ".gradual/events".to_string(),
+        include: Vec::new(),
+        exclude: Vec::new(),
     }
 }
 

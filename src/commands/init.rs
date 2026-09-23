@@ -1,11 +1,10 @@
-use super::raw_to_finding;
+use super::build_findings;
 use crate::analyzers;
 use crate::config::GradualConfig;
 use crate::events::reader::read_all_events;
 use crate::events::types::DeltaEvent;
 use crate::events::writer::write_delta_event;
 use crate::git::{find_repo_root, get_current_sha, get_parent_sha};
-use crate::identity::parser::ParseCache;
 use std::collections::HashSet;
 
 pub fn run() -> anyhow::Result<()> {
@@ -24,20 +23,9 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     let raw_findings = analyzers::run_all(&config, &repo_root, None)?;
+    let filter = config.path_filter()?;
 
-    let mut cache = ParseCache::new();
-    let mut genesis_findings = Vec::new();
-    for raw in &raw_findings {
-        match raw_to_finding(raw, &repo_root, &mut cache) {
-            Ok(f) => genesis_findings.push(f),
-            Err(e) => eprintln!(
-                "warning: skipping finding at {}:{}: {:#}",
-                raw.file.display(),
-                raw.line,
-                e
-            ),
-        }
-    }
+    let genesis_findings = build_findings(&raw_findings, &repo_root, &filter);
 
     let file_count: HashSet<&str> = genesis_findings.iter().map(|f| f.file.as_str()).collect();
 

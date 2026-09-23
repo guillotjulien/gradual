@@ -35,13 +35,18 @@ pub fn run_typescript(
         .and_then(|n| n.to_str())
         .unwrap_or("tsc");
 
-    let output = run_command(
-        Command::new(&bin_path)
-            .args(["--noEmit", "--pretty", "false", "-p"])
-            .arg(&tsconfig_path)
-            .current_dir(repo_root),
-        timeout,
-    )
+    // NOTE: we deliberately do NOT use `--incremental` here. `tsc --noEmit
+    // --incremental` can report a different diagnostic set than a full check (its
+    // cached-diagnostic replay is unreliable under `--noEmit`, especially for deep
+    // generic inference), which breaks the invariant that a no-change `check`
+    // reproduces the baseline exactly. Correctness beats speed for the regression
+    // gate; use `tsgo` for a faster full check instead.
+    let mut cmd = Command::new(&bin_path);
+    cmd.args(["--noEmit", "--pretty", "false", "-p"])
+        .arg(&tsconfig_path)
+        .current_dir(repo_root);
+
+    let output = run_command(&mut cmd, timeout)
     .with_context(|| {
         format!(
             "failed to run {bin_name} ({}). Check that it is installed and on PATH \
@@ -78,6 +83,33 @@ pub fn run_typescript(
             column: col_num,
             message,
         });
+    }
+
+    // An error reported against a `.json` file is a configuration error (e.g. tsgo
+    // rejecting an option like `baseUrl` that older `tsc` accepts): the compiler then
+    // type-checks no source at all. Fail loudly rather than recording an empty
+    // baseline that would silently hide every real error. (Such errors also get
+    // dropped by the path filter, so they must be caught here.)
+    let config_errors: Vec<&RawFinding> = findings
+        .iter()
+        .filter(|f| {
+            f.file
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+        })
+        .collect();
+    if !config_errors.is_empty() {
+        let details = config_errors
+            .iter()
+            .map(|f| format!("  {}:{} {}: {}", f.file.display(), f.line, f.rule, f.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::bail!(
+            "{bin_name} reported a TypeScript configuration error and type-checked no \
+             source files. If you are using tsgo, note it removes some options (e.g. \
+             `baseUrl`) that older `tsc` accepts — make your tsconfig tsgo-compatible or \
+             use `tsc`.\n\nConfiguration error(s):\n{details}"
+        );
     }
 
     // tsc exits nonzero when there are type errors — that's expected.
