@@ -111,7 +111,7 @@ jobs:
         shell: bash
         run: |
           cd npm/app
-          npm ci
+          npm install --no-package-lock --ignore-scripts --no-fund --omit=optional
           npm run build
           npm stage publish --access public --provenance
         env:
