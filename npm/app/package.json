@@ -1,6 +1,6 @@
 {
   "name": "@julienguillot/gradual",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "bin": {
     "gradual": "dist/index.js"
@@ -22,6 +22,6 @@
     "typescript": "^7.0.2"
   },
   "optionalDependencies": {
-    "@julienguillot/gradual-darwin-arm64": "0.1.0"
+    "@julienguillot/gradual-darwin-arm64": "0.1.1"
   }
 }
