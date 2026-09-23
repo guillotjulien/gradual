@@ -1,0 +1,26 @@
+{
+  "name": "@julienguillot/gradual",
+  "version": "0.1.0",
+  "bin": {
+    "gradual": "dist/index.js"
+  },
+  "author": "Julien Guillot <julienguillot@protonmail.com>",
+  "homepage": "https://github.com/guillotjulien/gradual",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guillotjulien/gradual.git"
+  },
+  "bugs": {
+    "url": "https://github.com/guillotjulien/gradual/issues"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
+  },
+  "optionalDependencies": {
+    "@julienguillot/gradual-darwin-arm64": "0.1.0"
+  }
+}

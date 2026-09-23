@@ -109,7 +109,6 @@ via a plugin API.
 - **Stable finding IDs** via tree-sitter AST node lookup from `(file, line, col)`, hashed with xxH3-128
 - **Fold algorithm** replays deltas to produce current baseline state
 - **Two commands**: `check` (read-only gate) and `update` (write delta, fails on regressions)
-- **Git hook** integration via a simple shell script calling the compiled binary
 
 ---
 
@@ -142,8 +141,7 @@ gradual/
 │   │   ├── mod.rs
 │   │   ├── check.rs
 │   │   ├── update.rs
-│   │   ├── init.rs
-│   │   └── install_hook.rs
+│   │   └── init.rs
 │   └── git.rs                        # get_current_sha, get_parent_sha
 └── tests/
     ├── identity/
@@ -656,7 +654,6 @@ throughout.
            yes: bool,
        },
        Init,
-       InstallHook,
    }
    ```
    Route to the appropriate command module. Use `anyhow::Result<()>` throughout
@@ -674,61 +671,7 @@ throughout.
 
 ---
 
-## Phase 6 — Git hook integration
-
-**Goal:** one-command hook installation, zero manual steps for new developers.
-
-### Tasks
-
-1. **`src/commands/install_hook.rs`**:
-   - Target: `.git/hooks/pre-commit`
-   - Check if the hook already exists:
-     - If it doesn't: write it, `chmod +x`, done
-     - If it exists and already contains `gradual check`: print "already installed", done
-     - If it exists with other content: print a warning and instructions to add manually,
-       don't overwrite (never clobber another tool's hook)
-   - Hook content:
-     ```sh
-     #!/bin/sh
-     # Added by gradual. Do not edit this line.
-     gradual check
-     ```
-
-2. **`src/commands/init.rs`**:
-   - Check `events_dir` — if it already has `.json` files, print a warning and exit 1
-     ("already initialized, run `gradual update` to record changes")
-   - Run both analyzers → all current findings are the genesis `added` set
-   - Write the genesis delta event (all findings as `added`, empty `removed`)
-   - Create `.gradual/.gitignore` with contents:
-     ```
-     cache/
-     ```
-   - Print:
-     ```
-     Initialized. Found N findings across M files.
-     Next steps:
-       git add .gradual/
-       git commit -m "chore: initialize gradual baseline"
-       gradual install-hook
-     ```
-
-3. **Binary installation story** (document in README):
-   ```
-   # Option A: cargo install (from source)
-   cargo install --path .
-
-   # Option B: download pre-built binary (future GitHub releases)
-   curl -sSfL https://github.com/you/gradual/releases/latest/download/install.sh | sh
-   ```
-   The binary has zero runtime dependencies. Developers don't need Rust installed
-   to use it — just download the binary for their platform.
-
-**Done when:** `gradual init && gradual install-hook` sets up a fresh repo correctly,
-and the pre-commit hook fires and gates commits.
-
----
-
-## Phase 7 — Hardening
+## Phase 6 — Hardening
 
 **Goal:** safe to adopt in a large production repo.
 
@@ -780,7 +723,7 @@ and the pre-commit hook fires and gates commits.
 Start Phase 2 — the hasher is the riskiest piece and gates everything else.
 
 ```
-Phase 2 → Phase 4 → Phase 3 → Phase 5 → Phase 6 → Phase 7
+Phase 2 → Phase 4 → Phase 3 → Phase 5 → Phase 6
 ```
 
 Rationale: prove the identity logic before building the pipeline around it. If the

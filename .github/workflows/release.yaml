@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-npm-binaries:
+    name: Publish NPM packages
+    runs-on: ${{ matrix.build.OS }}
+    
+    permissions:
+      contents: read
+      id-token: write # Required for NPM provenance
+      
+    strategy:
+      fail-fast: false
+      matrix:
+        build:
+          - NAME: darwin-arm64
+            OS: macos-latest
+            TOOLCHAIN: stable
+            TARGET: aarch64-apple-darwin
+            
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set the release version
+        shell: bash
+        run: echo "RELEASE_VERSION=${{ github.ref_name }}" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.build.TARGET }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.build.TARGET }}
+
+      - name: Build
+        shell: bash
+        run: |
+          # Use `cross` for Ubuntu builds as in the original intent
+          if [ "${{ matrix.build.OS }}" = "ubuntu-latest" ]; then
+            cargo install cross --git https://github.com/cross-rs/cross
+            cross build --release --locked --target ${{ matrix.build.TARGET }}
+          else
+            cargo build --release --locked --target ${{ matrix.build.TARGET }}
+          fi
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to NPM
+        shell: bash
+        run: |
+          cd npm
+          bin="gradual"
+          node_os=$(echo "${{ matrix.build.NAME }}" | cut -d '-' -f1)
+          export node_os
+          node_arch=$(echo "${{ matrix.build.NAME }}" | cut -d '-' -f2)
+          export node_arch
+          export node_version="${{ env.RELEASE_VERSION }}"
+
+          if [ "${{ matrix.build.OS }}" = "windows-latest" ]; then
+            export node_pkg="${bin}-windows-${node_arch}"
+            bin="${bin}.exe"
+          else
+            export node_pkg="${bin}-${node_os}-${node_arch}"
+          fi
+
+          mkdir -p "${node_pkg}/bin"
+          envsubst < package.json.tmpl > "${node_pkg}/package.json"
+          cp "../target/${{ matrix.build.TARGET }}/release/${bin}" "${node_pkg}/bin"
+
+          cd "${node_pkg}"
+          npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-npm-base:
+    name: Publish the base NPM package
+    needs: publish-npm-binaries
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write # Required for NPM provenance
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish the package
+        shell: bash
+        run: |
+          cd npm/app
+          npm ci
+          npm run build
+          npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  create-github-release:
+    name: Create GitHub Release
+    needs: publish-npm-base
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes

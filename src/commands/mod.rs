@@ -1,6 +1,5 @@
 pub mod check;
 pub mod init;
-pub mod install_hook;
 pub mod status;
 pub mod update;
 

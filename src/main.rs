@@ -37,8 +37,6 @@ enum Command {
     },
     /// Initialize the baseline from the current finding state.
     Init,
-    /// Install the gradual pre-commit hook into .git/hooks/pre-commit.
-    InstallHook,
     /// Show current baseline statistics grouped by rule.
     Status,
 }
@@ -53,7 +51,6 @@ fn run() -> anyhow::Result<()> {
             commands::update::run(force, yes, timeout.map(Duration::from_secs))
         }
         Command::Init => commands::init::run(),
-        Command::InstallHook => commands::install_hook::run(),
         Command::Status => commands::status::run(),
     }
 }
