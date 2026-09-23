@@ -1,6 +1,7 @@
 {
   "name": "@julienguillot/gradual",
   "version": "0.1.0",
+  "type": "module",
   "bin": {
     "gradual": "dist/index.js"
   },
