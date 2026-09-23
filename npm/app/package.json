@@ -5,6 +5,7 @@
   "bin": {
     "gradual": "dist/index.js"
   },
+  "license": "MIT",
   "author": "Julien Guillot <julienguillot@protonmail.com>",
   "homepage": "https://github.com/guillotjulien/gradual",
   "repository": {

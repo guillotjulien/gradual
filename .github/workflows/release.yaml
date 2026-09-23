@@ -84,7 +84,7 @@ jobs:
           cp "../target/${{ matrix.build.TARGET }}/release/${bin}" "${node_pkg}/bin"
 
           cd "${node_pkg}"
-          npm publish --access public --provenance
+          npm stage publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -113,7 +113,7 @@ jobs:
           cd npm/app
           npm ci
           npm run build
-          npm publish --access public --provenance
+          npm stage publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
