@@ -9,7 +9,7 @@ Gradual is a CLI tool that helps teams adopt strict TypeScript and ESLint rules 
 Install Gradual as a development dependency:
 
 ```bash
-npm install --save-dev @guillotjulien/gradual
+npm install --save-dev @julienguillot/gradual
 ```
 
 ## 🚀 Getting Started
