@@ -65,6 +65,7 @@ jobs:
         shell: bash
         run: |
           cd npm
+
           bin="gradual"
           node_os=$(echo "${{ matrix.build.NAME }}" | cut -d '-' -f1)
           export node_os
@@ -84,9 +85,11 @@ jobs:
           cp "../target/${{ matrix.build.TARGET }}/release/${bin}" "${node_pkg}/bin"
 
           cd "${node_pkg}"
+
+          cp ../../README.md .
+          cp ../../LICENSE .
+
           npm stage publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-npm-base:
     name: Publish the base NPM package
@@ -111,6 +114,7 @@ jobs:
         shell: bash
         run: |
           cd npm/app
+
           # 1. Temporarily strip our unreleased binaries from package.json
           npm pkg delete optionalDependencies
           
@@ -120,9 +124,11 @@ jobs:
           # 3. Restore the package.json so the final publish includes our binaries
           git checkout package.json
           npm run build
+
+          cp ../../README.md .
+          cp ../../LICENSE .
+
           npm stage publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   create-github-release:
     name: Create GitHub Release
