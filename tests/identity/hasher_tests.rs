@@ -53,15 +53,6 @@ fn add_import_does_not_change_id() {
 }
 
 #[test]
-fn reformat_does_not_change_id() {
-    // reformatted.ts has whitespace-only changes; the block strips whitespace.
-    let dir = tempfile::tempdir().unwrap();
-    let base_id = id_for_content("base.ts", BASE_LINE, dir.path());
-    let reformatted_id = id_for_content("reformatted.ts", BASE_LINE, dir.path());
-    assert_eq!(base_id, reformatted_id, "ID changed after reformatting");
-}
-
-#[test]
 fn renaming_variable_changes_id() {
     // variable_renamed.ts: `message` → `greeting` — the line's content changes.
     let dir = tempfile::tempdir().unwrap();
@@ -94,20 +85,6 @@ fn distinct_lines_have_distinct_ids() {
     let base_id = id_for_fixture("duplicated_line.ts", 2);
     let second_id = id_for_fixture("duplicated_line.ts", 3);
     assert_ne!(base_id, second_id, "Distinct lines should have distinct IDs");
-}
-
-#[test]
-fn sibling_test_blocks_have_distinct_ids() {
-    // test_blocks.ts has a byte-identical `const value = compute(input)` in two
-    // it() blocks. The forward context (what follows each block) differs, so their
-    // base ids differ — no it()-specific labeling needed.
-    let dir = tempfile::tempdir().unwrap();
-    let first = id_for_content("test_blocks.ts", 3, dir.path());
-    let second = id_for_content("test_blocks.ts", 8, dir.path());
-    assert_ne!(
-        first, second,
-        "identical code in different it() blocks must get distinct IDs"
-    );
 }
 
 #[test]

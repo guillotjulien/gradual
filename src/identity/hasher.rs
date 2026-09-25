@@ -57,29 +57,19 @@ pub fn normalize_message(message: &str, repo_root: &Path) -> String {
 // Forward context block (à la codeql-action fingerprints.ts)
 // ===========================================================================
 
-/// Number of non-whitespace characters in a forward context block.
-pub const BLOCK_SIZE: usize = 100;
-
-/// The first `BLOCK_SIZE` non-whitespace characters starting at `line` (1-indexed)
-/// and spilling into following lines. All whitespace is skipped, so reindentation
-/// and reformatting do not change it.
-pub fn forward_block(source: &str, line: u32) -> String {
+/// Extracts only the normalized text of the finding's specific line.
+/// By ignoring subsequent lines, downstream edits (like adding a new property) 
+/// will never alter this finding's identity.
+pub fn line_block(source: &str, line: u32) -> String {
     let start = line.saturating_sub(1) as usize;
-    let mut out = String::new();
-    let mut count = 0usize;
-    for l in source.lines().skip(start) {
-        for c in l.chars() {
-            if c.is_whitespace() {
-                continue;
-            }
-            out.push(c);
-            count += 1;
-            if count >= BLOCK_SIZE {
-                return out;
-            }
-        }
-    }
-    out
+    
+    source
+        .lines()
+        .nth(start)
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ===========================================================================
@@ -107,7 +97,7 @@ pub fn compute_block_id(finding: &RawFinding, repo_root: &Path) -> anyhow::Resul
         })?
         .to_slash_lossy();
     let message = normalize_message(&finding.message, repo_root);
-    let code = forward_block(&source, finding.line);
+    let code = line_block(&source, finding.line);
     Ok(hash_components(&finding.rule, rel.as_ref(), &message, &code))
 }
 
