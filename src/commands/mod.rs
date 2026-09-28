@@ -5,14 +5,15 @@ pub mod update;
 
 use crate::analyzers;
 use crate::config::GradualConfig;
-use crate::events::diff::{group_by_id, repeatedly_fixed_ids};
+use crate::events::diff::{KeyDelta, describe_new_with, group_by_id, repeatedly_fixed_ids};
 use crate::events::fold::fold;
 use crate::events::reader::read_all_events;
 use crate::events::types::{Entry, Finding};
-use crate::git::find_repo_root;
+use crate::git::{added_line_tiers, find_repo_root};
 use crate::identity::build_findings;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub struct AnalysisResult {
@@ -46,5 +47,18 @@ pub fn analyze(timeout: Option<Duration>) -> anyhow::Result<AnalysisResult> {
         repeatedly_fixed,
         repo_root,
         events_dir,
+    })
+}
+
+/// Lines describing the new findings, using git to point at the twin in your diff
+/// when a group of identical findings has only some new members.
+pub fn describe(repo_root: &Path, deltas: &[KeyDelta]) -> Vec<String> {
+    let cache: RefCell<HashMap<String, Vec<HashSet<u32>>>> = RefCell::new(HashMap::new());
+    describe_new_with(deltas, &|file| {
+        cache
+            .borrow_mut()
+            .entry(file.to_string())
+            .or_insert_with(|| added_line_tiers(repo_root, file))
+            .clone()
     })
 }

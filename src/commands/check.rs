@@ -1,5 +1,5 @@
-use super::analyze;
-use crate::events::diff::{concurrent_fix_hint, describe_new, diff, new_count, removed_count};
+use super::{analyze, describe};
+use crate::events::diff::{concurrent_fix_hint, diff, new_count, removed_count};
 use std::time::Duration;
 
 pub fn run(timeout: Option<Duration>) -> anyhow::Result<()> {
@@ -8,7 +8,7 @@ pub fn run(timeout: Option<Duration>) -> anyhow::Result<()> {
 
     let added = new_count(&deltas);
     if added > 0 {
-        for line in describe_new(&deltas) {
+        for line in describe(&result.repo_root, &deltas) {
             eprintln!("{line}");
         }
         eprintln!();

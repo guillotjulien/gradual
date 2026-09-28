@@ -46,6 +46,8 @@ npm install --save-dev @julienguillot/gradual
 ### `gradual check`
 **Gate commits and CI pipelines.** Compares the current state of your codebase against the saved baseline. If any *new* findings appear that were not in the baseline, the command exits with code `1`.
 
+If several identical findings exist in a file (same rule, message and line text) and only some are new, Gradual can't tell them apart by content. It points at the ones on lines you added according to `git diff` (against `HEAD`, then against the branch point from your default branch), and otherwise lists the whole group.
+
 ### `gradual update`
 **Shrink the baseline.** As you fix legacy tech debt, run this command to record the current findings as a new baseline delta event. This prevents regressions by ensuring old errors can never be reintroduced once fixed.
 

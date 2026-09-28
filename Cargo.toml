@@ -29,6 +29,10 @@ name = "edit_scenarios_tests"
 path = "tests/identity/edit_scenarios_tests.rs"
 
 [[test]]
+name = "added_lines_tests"
+path = "tests/git/added_lines_tests.rs"
+
+[[test]]
 name = "fold_tests"
 path = "tests/events/fold_tests.rs"
 

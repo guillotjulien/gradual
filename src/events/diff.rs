@@ -82,11 +82,35 @@ pub fn removed_count(deltas: &[KeyDelta]) -> u64 {
     deltas.iter().filter(|d| d.delta < 0).map(|d| d.delta.unsigned_abs()).sum()
 }
 
+/// The group's lines that git says were added, from the first tier where exactly
+/// `delta` of them are. `None` when no tier is conclusive.
+#[allow(clippy::implicit_hasher)]
+pub fn locate_new(delta: &KeyDelta, tiers: &[HashSet<u32>]) -> Option<Vec<u32>> {
+    let excess = usize::try_from(delta.delta).ok()?;
+    tiers.iter().find_map(|added| {
+        let hits: Vec<u32> =
+            delta.current.iter().map(|f| f.line).filter(|l| added.contains(l)).collect();
+        (hits.len() == excess).then_some(hits)
+    })
+}
+
+/// Human-readable lines for the new findings, without git information.
+#[allow(dead_code)] // used through the library (tests); the binary calls `describe_new_with`
+pub fn describe_new(deltas: &[KeyDelta]) -> Vec<String> {
+    describe_new_with(deltas, &|_| Vec::new())
+}
+
 /// Human-readable lines for the new findings.
 ///
-/// Findings sharing an id are indistinguishable, so when only some of a group are
-/// new, the whole group is listed on one line: which twin is new cannot be known.
-pub fn describe_new(deltas: &[KeyDelta]) -> Vec<String> {
+/// Findings sharing an id are indistinguishable by content. When only some of a group
+/// are new, `added_tiers(file)` (lines added per git, tightest first) is consulted
+/// to point at the twins in the diff; if it is inconclusive the whole group is listed
+/// on one line.
+#[allow(clippy::implicit_hasher)]
+pub fn describe_new_with(
+    deltas: &[KeyDelta],
+    added_tiers: &dyn Fn(&str) -> Vec<HashSet<u32>>,
+) -> Vec<String> {
     let mut lines = Vec::new();
     for d in deltas.iter().filter(|d| d.delta > 0) {
         let excess = usize::try_from(d.delta).unwrap_or(usize::MAX);
@@ -94,8 +118,28 @@ pub fn describe_new(deltas: &[KeyDelta]) -> Vec<String> {
             for f in &d.current {
                 lines.push(format!("{}:{}  {}  {}", f.file, f.line, f.rule, f.message));
             }
+            continue;
+        }
+        let first = &d.current[0];
+        if let Some(hits) = locate_new(d, &added_tiers(&first.file)) {
+            let others: Vec<String> = d
+                .current
+                .iter()
+                .map(|f| f.line)
+                .filter(|l| !hits.contains(l))
+                .map(|l| l.to_string())
+                .collect();
+            for f in d.current.iter().filter(|f| hits.contains(&f.line)) {
+                lines.push(format!(
+                    "{}:{}  {}  {}  (in your diff; identical findings also at lines {})",
+                    f.file,
+                    f.line,
+                    f.rule,
+                    f.message,
+                    others.join(", ")
+                ));
+            }
         } else {
-            let first = &d.current[0];
             let at: Vec<String> = d.current.iter().map(|f| f.line.to_string()).collect();
             lines.push(format!(
                 "{}  {}  {}  ({excess} new among {} identical findings, lines {})",

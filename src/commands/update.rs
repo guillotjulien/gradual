@@ -1,5 +1,5 @@
-use super::analyze;
-use crate::events::diff::{KeyDelta, concurrent_fix_hint, describe_new, diff, new_count};
+use super::{analyze, describe};
+use crate::events::diff::{KeyDelta, concurrent_fix_hint, diff, new_count};
 use crate::events::types::{DeltaEvent, EVENT_VERSION};
 use crate::events::writer::write_delta_event;
 use crate::git::{get_current_sha, get_parent_sha};
@@ -13,7 +13,7 @@ pub fn run(force: bool, yes: bool, timeout: Option<Duration>) -> anyhow::Result<
     let added = new_count(&deltas);
 
     if added > 0 && !force {
-        for line in describe_new(&deltas) {
+        for line in describe(&result.repo_root, &deltas) {
             eprintln!("{line}");
         }
         eprintln!();
@@ -27,7 +27,7 @@ pub fn run(force: bool, yes: bool, timeout: Option<Duration>) -> anyhow::Result<
 
     if added > 0 {
         eprintln!("⚠ Accepting {added} new finding(s):");
-        for line in describe_new(&deltas) {
+        for line in describe(&result.repo_root, &deltas) {
             eprintln!("  {line}");
         }
         eprintln!();
