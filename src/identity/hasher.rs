@@ -1,25 +1,24 @@
 //! Stable finding identity ("fingerprint") for static-analysis findings.
 //!
-//! Identity is `hash(rule, file, normalized_message, line_block)` plus a
-//! per-base-hash occurrence counter (`:n`):
+//! Identity is `hash(rule, file, normalized_message, line_block)`:
 //!
 //!   - **`line_block`** is the whitespace-normalized text of the finding's own line.
 //!     Being content-relative, it survives code inserted or removed anywhere else
 //!     in the file, edits to neighbouring lines, re-indentation and CRLF/LF changes.
 //!   - **`normalized_message`** strips absolute paths so ids are stable per checkout.
-//!   - the **`:n` counter** (assigned by `assign_counters` in source order)
-//!     tells apart findings whose base hashes match (e.g. identical lines).
+//!
+//! Findings that share an id (identical lines with the same rule and message in one
+//! file, "twins") are not numbered: the baseline stores how many are accepted, and
+//! `check` fails when the current count is higher. Counting, unlike positional
+//! numbering, gives the same answer no matter how parallel branches interleave.
 //!
 //! Trade-off: only the finding's own line is hashed, so editing that line, renaming
-//! the file, or changing the diagnostic changes the id. Identical lines in one file
-//! are distinguished by order alone, so fixing an earlier twin shifts the counters
-//! of later ones (as a set of ids the result is still stable).
+//! the file, or changing the diagnostic changes the id.
 
 use crate::analyzers::types::RawFinding;
 use anyhow::Context;
 use path_slash::PathExt;
 use regex::Regex;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -79,7 +78,7 @@ fn hash_components(rule: &str, rel_path: &str, message: &str, code: &str) -> Str
     format!("{:032x}", xxh3_128(input.as_bytes()))
 }
 
-/// Base identity (no occurrence counter) for a finding.
+/// Identity of a finding.
 pub fn compute_block_id(finding: &RawFinding, repo_root: &Path) -> anyhow::Result<String> {
     let source = fs::read_to_string(&finding.file)
         .with_context(|| format!("Failed to read {}", finding.file.display()))?;
@@ -97,20 +96,4 @@ pub fn compute_block_id(finding: &RawFinding, repo_root: &Path) -> anyhow::Resul
     let message = normalize_message(&finding.message, repo_root);
     let code = line_block(&source, finding.line);
     Ok(hash_components(&finding.rule, rel.as_ref(), &message, &code))
-}
-
-/// Appends CodeQL-style `:n` occurrence counters to base ids so identical base ids
-/// become unique. Counters are assigned in the given order (callers pass findings
-/// in a deterministic source order), starting at 0.
-pub fn assign_counters(base_ids: &[String]) -> Vec<String> {
-    let mut seen: HashMap<&str, usize> = HashMap::new();
-    base_ids
-        .iter()
-        .map(|id| {
-            let n = seen.entry(id.as_str()).or_insert(0);
-            let out = format!("{id}:{n}");
-            *n += 1;
-            out
-        })
-        .collect()
 }

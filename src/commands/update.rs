@@ -1,5 +1,6 @@
 use super::analyze;
-use crate::events::types::DeltaEvent;
+use crate::events::diff::{KeyDelta, concurrent_fix_hint, describe_new, diff, new_count};
+use crate::events::types::{DeltaEvent, EVENT_VERSION};
 use crate::events::writer::write_delta_event;
 use crate::git::{get_current_sha, get_parent_sha};
 use std::io::{BufRead, IsTerminal};
@@ -8,38 +9,26 @@ use std::time::Duration;
 pub fn run(force: bool, yes: bool, timeout: Option<Duration>) -> anyhow::Result<()> {
     let result = analyze(timeout)?;
 
-    let mut added: Vec<_> = result
-        .current
-        .values()
-        .filter(|f| !result.baseline.contains_key(&f.id))
-        .cloned()
-        .collect();
-    added.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+    let deltas = diff(&result.current, &result.baseline);
+    let added = new_count(&deltas);
 
-    let mut removed: Vec<String> = result
-        .baseline
-        .keys()
-        .filter(|id| !result.current.contains_key(*id))
-        .cloned()
-        .collect();
-    removed.sort();
-
-    if !added.is_empty() && !force {
-        for f in &added {
-            eprintln!("{}:{}  {}  {}", f.file, f.line, f.rule, f.message);
+    if added > 0 && !force {
+        for line in describe_new(&deltas) {
+            eprintln!("{line}");
         }
         eprintln!();
-        eprintln!(
-            "{} new finding(s). Run with --force to accept regressions.",
-            added.len()
-        );
+        if let Some(hint) = concurrent_fix_hint(&deltas, &result.repeatedly_fixed) {
+            eprintln!("{hint}");
+            eprintln!();
+        }
+        eprintln!("{added} new finding(s). Run with --force to accept regressions.");
         std::process::exit(1);
     }
 
-    if !added.is_empty() {
-        eprintln!("⚠ Accepting {} new finding(s):", added.len());
-        for f in &added {
-            eprintln!("  {}:{}  {}  {}", f.file, f.line, f.rule, f.message);
+    if added > 0 {
+        eprintln!("⚠ Accepting {added} new finding(s):");
+        for line in describe_new(&deltas) {
+            eprintln!("  {line}");
         }
         eprintln!();
 
@@ -55,7 +44,7 @@ pub fn run(force: bool, yes: bool, timeout: Option<Duration>) -> anyhow::Result<
         }
     }
 
-    if added.is_empty() && removed.is_empty() {
+    if deltas.is_empty() {
         println!("✓ Baseline is already up to date. Nothing to record.");
         return Ok(());
     }
@@ -64,12 +53,11 @@ pub fn run(force: bool, yes: bool, timeout: Option<Duration>) -> anyhow::Result<
     let parent = get_parent_sha(&result.repo_root).unwrap_or_else(|_| "unknown".to_string());
 
     let event = DeltaEvent {
-        version: 1,
+        version: EVENT_VERSION,
         commit,
         parent,
         timestamp: chrono::Utc::now().to_rfc3339(),
-        added,
-        removed,
+        changes: deltas.iter().map(KeyDelta::change).collect(),
     };
 
     let path = write_delta_event(&result.events_dir, &event)?;

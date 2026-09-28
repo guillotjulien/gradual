@@ -1,5 +1,5 @@
 use gradual::analyzers::types::RawFinding;
-use gradual::identity::hasher::{assign_counters, compute_block_id};
+use gradual::identity::hasher::compute_block_id;
 use std::path::{Path, PathBuf};
 
 fn fixtures_dir() -> PathBuf {
@@ -155,16 +155,4 @@ fn abs_path_in_message_is_stable() {
     let id_a = id_for_message(&msg(dir_a.path()), dir_a.path());
     let id_b = id_for_message(&msg(dir_b.path()), dir_b.path());
     assert_eq!(id_a, id_b, "ID should be stable across checkouts (abs path normalized)");
-}
-
-#[test]
-fn counter_disambiguates_identical_base_ids() {
-    // Findings whose base ids match (true twins) fall back to the `:n` counter.
-    let base = assign_counters(&[
-        "aaa".to_string(),
-        "aaa".to_string(),
-        "bbb".to_string(),
-        "aaa".to_string(),
-    ]);
-    assert_eq!(base, vec!["aaa:0", "aaa:1", "bbb:0", "aaa:2"]);
 }

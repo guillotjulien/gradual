@@ -66,6 +66,16 @@ To get the most out of Gradual, integrate it into your daily development cycle:
 3. **Tech Debt Sprints:**
    When a developer fixes legacy errors, have them run `gradual update` and include the baseline changes in their pull request.
 
+## ⬆️ Migrating from 0.1.x
+
+The baseline format changed: identical findings (same rule, file, message and line text) are now **counted** instead of numbered, so baselines from parallel branches merge correctly. Old baselines are rejected with an error. To migrate, on a clean branch:
+
+```bash
+rm -rf .gradual/events
+npx gradual init
+git add .gradual && git commit -m "chore: rebuild gradual baseline"
+```
+
 ## 📄 License
 
 MIT

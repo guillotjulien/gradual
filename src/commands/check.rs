@@ -1,36 +1,28 @@
 use super::analyze;
+use crate::events::diff::{concurrent_fix_hint, describe_new, diff, new_count, removed_count};
 use std::time::Duration;
 
 pub fn run(timeout: Option<Duration>) -> anyhow::Result<()> {
     let result = analyze(timeout)?;
+    let deltas = diff(&result.current, &result.baseline);
 
-    let mut added: Vec<_> = result
-        .current
-        .values()
-        .filter(|f| !result.baseline.contains_key(&f.id))
-        .collect();
-    added.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-
-    let removed_count = result
-        .baseline
-        .values()
-        .filter(|f| !result.current.contains_key(&f.id))
-        .count();
-
-    if !added.is_empty() {
-        for f in &added {
-            eprintln!("{}:{}  {}  {}", f.file, f.line, f.rule, f.message);
+    let added = new_count(&deltas);
+    if added > 0 {
+        for line in describe_new(&deltas) {
+            eprintln!("{line}");
         }
         eprintln!();
-        eprintln!(
-            "{} new finding(s) since baseline. Fix them or run `gradual update --force`.",
-            added.len()
-        );
+        if let Some(hint) = concurrent_fix_hint(&deltas, &result.repeatedly_fixed) {
+            eprintln!("{hint}");
+            eprintln!();
+        }
+        eprintln!("{added} new finding(s) since baseline. Fix them or run `gradual update --force`.");
         std::process::exit(1);
     }
 
-    if removed_count > 0 {
-        println!("✓ No regressions ({removed_count} finding(s) removed since baseline).");
+    let removed = removed_count(&deltas);
+    if removed > 0 {
+        println!("✓ No regressions ({removed} finding(s) removed since baseline).");
     } else {
         println!("✓ No regressions.");
     }

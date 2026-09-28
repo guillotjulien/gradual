@@ -1,23 +1,23 @@
 use super::build_findings;
 use crate::analyzers;
 use crate::config::GradualConfig;
-use crate::events::reader::read_all_events;
-use crate::events::types::DeltaEvent;
+use crate::events::diff::{KeyDelta, diff, group_by_id};
+use crate::events::reader::count_event_files;
+use crate::events::types::{DeltaEvent, EVENT_VERSION};
 use crate::events::writer::write_delta_event;
 use crate::git::{find_repo_root, get_current_sha, get_parent_sha};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub fn run() -> anyhow::Result<()> {
     let repo_root = find_repo_root()?;
     let config = GradualConfig::load(&repo_root)?;
     let events_dir = repo_root.join(&config.events_dir);
 
-    let existing = read_all_events(&events_dir);
-    if !existing.is_empty() {
+    let existing = count_event_files(&events_dir);
+    if existing > 0 {
         anyhow::bail!(
-            "Already initialized ({} event(s) found in {}).\n\
-             Run `gradual update` to record changes.",
-            existing.len(),
+            "Already initialized ({existing} event file(s) found in {}).\n\
+             Run `gradual update` to record changes, or delete the directory to start over.",
             events_dir.display()
         );
     }
@@ -33,12 +33,14 @@ pub fn run() -> anyhow::Result<()> {
     let parent = get_parent_sha(&repo_root).unwrap_or_else(|_| "none".to_string());
 
     let event = DeltaEvent {
-        version: 1,
+        version: EVENT_VERSION,
         commit,
         parent,
         timestamp: chrono::Utc::now().to_rfc3339(),
-        added: genesis_findings.clone(),
-        removed: vec![],
+        changes: diff(&group_by_id(genesis_findings.clone()), &HashMap::new())
+            .iter()
+            .map(KeyDelta::change)
+            .collect(),
     };
 
     write_delta_event(&events_dir, &event)?;

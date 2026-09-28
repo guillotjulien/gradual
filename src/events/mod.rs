@@ -1,3 +1,4 @@
+pub mod diff;
 pub mod types;
 pub mod reader;
 pub mod fold;

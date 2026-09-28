@@ -1,24 +1,30 @@
 //! Edit-scenario tests for finding identity.
 //!
 //! Each test scans a "before" and an "after" state of a small repo, exactly as
-//! `gradual check` would (through `build_findings`), and asserts on the set-diff of
-//! finding ids: `added` = new findings (what fails the build), `removed` = findings
-//! that disappeared from the baseline.
+//! `gradual check` would (through `build_findings` and the production `diff`), and
+//! asserts on the change in accepted counts per id: `added` = new findings (what
+//! fails the build), `removed` = findings that disappeared from the baseline.
 //!
 //! Sections:
 //!   A. stability   — everyday edits that must NOT change ids
 //!   B. sensitivity — edits that MUST change ids (pins the intended trade-offs)
-//!   C. duplicates  — `:n` counter behavior for identical lines
+//!   C. duplicates  — twins (identical findings) are counted, never numbered
 //!   D. edge cases  — EOF, missing files, path filtering
 //!   E. golden pins — literal expected values; failing means the algorithm changed
 //!                    and every committed baseline would be invalidated
+//!   F. branches    — parallel branches touching the same twin group
 
 use gradual::analyzers::types::RawFinding;
 use gradual::config::{GradualConfig, PathFilter};
-use gradual::events::types::Finding;
+use gradual::events::diff::{
+    KeyDelta, concurrent_fix_hint, describe_new, diff, group_by_id, new_count, removed_count,
+    repeatedly_fixed_ids,
+};
+use gradual::events::fold::fold;
+use gradual::events::types::{Change, DeltaEvent, EVENT_VERSION, Entry, Finding};
 use gradual::identity::build_findings;
 use gradual::identity::hasher::{compute_block_id, line_block, normalize_message};
-use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -130,30 +136,36 @@ fn scan(files: &[(&str, &str)], marks: &[Mark]) -> Vec<Finding> {
     build_findings(&raws(dir.path(), files, marks), dir.path(), &all_paths())
 }
 
-fn ids(findings: &[Finding]) -> BTreeSet<String> {
-    findings.iter().map(|f| f.id.clone()).collect()
+/// The baseline `gradual init` would record for these findings.
+fn baseline_of(findings: &[Finding]) -> HashMap<String, Entry> {
+    fold(&[event(T0, changes_for(findings, &HashMap::new()))])
 }
 
-/// `(added, removed)` with the same set semantics as `commands::check`.
-fn delta(before: &[Finding], after: &[Finding]) -> (BTreeSet<String>, BTreeSet<String>) {
-    let (b, a) = (ids(before), ids(after));
-    (a.difference(&b).cloned().collect(), b.difference(&a).cloned().collect())
+fn changes_for(current: &[Finding], baseline: &HashMap<String, Entry>) -> Vec<Change> {
+    diff(&group_by_id(current.to_vec()), baseline).iter().map(KeyDelta::change).collect()
+}
+
+/// What `check` sees when `before` is the baseline and `after` the current state.
+fn deltas(before: &[Finding], after: &[Finding]) -> Vec<KeyDelta> {
+    diff(&group_by_id(after.to_vec()), &baseline_of(before))
+}
+
+/// `(added, removed)` counts, as `check` reports them.
+fn delta(before: &[Finding], after: &[Finding]) -> (u64, u64) {
+    let d = deltas(before, after);
+    (new_count(&d), removed_count(&d))
 }
 
 #[track_caller]
 fn assert_stable(before: &[Finding], after: &[Finding]) {
-    let (added, removed) = delta(before, after);
-    assert!(
-        added.is_empty() && removed.is_empty(),
-        "ids changed.\n  added:   {added:?}\n  removed: {removed:?}"
-    );
+    let d = deltas(before, after);
+    assert!(d.is_empty(), "accepted counts changed: {d:#?}");
 }
 
-/// The edit must surface as exactly `added` new ids and `removed` vanished ids.
+/// The edit must surface as exactly `added` new findings and `removed` vanished ones.
 #[track_caller]
-fn assert_rekeyed(before: &[Finding], after: &[Finding], added: usize, removed: usize) {
-    let (a, r) = delta(before, after);
-    assert_eq!((a.len(), r.len()), (added, removed), "added: {a:?}, removed: {r:?}");
+fn assert_rekeyed(before: &[Finding], after: &[Finding], added: u64, removed: u64) {
+    assert_eq!(delta(before, after), (added, removed), "(added, removed)");
 }
 
 // ---------------------------------------------------------------------------
@@ -312,8 +324,7 @@ fn a10_same_repo_checked_out_at_different_absolute_paths() {
 
 #[test]
 fn a11_analyzer_emission_order_is_irrelevant() {
-    // Twins + a distinct finding; the counter must attach to source order, not to
-    // emission order.
+    // Twins + a distinct finding: output order is by source position, not emission.
     let files = [(APP, TWINS)];
     let marks = [
         mark(APP, "legacy.value"),
@@ -358,14 +369,12 @@ fn a13_realistic_commit_only_touches_what_changed() {
     let marks = [mark(APP, "const message"), mark(APP, "bye(n)").msg("Cannot find name 'bye'")];
     let after = scan(&[(APP, &after_src)], &marks);
 
-    let (added, removed) = delta(&before, &after);
-    assert_eq!((added.len(), removed.len()), (1, 1), "added: {added:?}, removed: {removed:?}");
-    let new = after.iter().find(|f| added.contains(&f.id)).unwrap();
-    assert_eq!(new.message, "Cannot find name 'bye'");
-    let gone = before.iter().find(|f| removed.contains(&f.id)).unwrap();
-    assert!(gone.message == MSG && gone.line == 8, "unexpected removed finding: {gone:?}");
-    // `const message` survived the whole commit with the same id.
-    assert!(ids(&before).contains(&after.iter().find(|f| f.message == MSG).unwrap().id));
+    let d = deltas(&before, &after);
+    assert_eq!((new_count(&d), removed_count(&d)), (1, 1), "{d:#?}");
+    let line = line_of(&after_src, "bye(n)", 0);
+    assert_eq!(describe_new(&d), [format!("{APP}:{line}  {RULE}  Cannot find name 'bye'")]);
+    let gone = d.iter().find(|k| k.delta < 0).unwrap();
+    assert_eq!((gone.file.as_str(), gone.rule.as_str()), (APP, RULE));
 }
 
 // ===========================================================================
@@ -434,17 +443,18 @@ fn twin_marks() -> Vec<Mark> {
 }
 
 #[test]
-fn c01_twins_get_distinct_counters() {
+fn c01_twins_share_an_id_and_are_counted() {
     let f = scan(&[(APP, TWINS)], &twin_marks());
     assert_eq!(f.len(), 2);
-    let (a, b) = (&f[0].id, &f[1].id);
-    assert_ne!(a, b);
-    assert_eq!(a.rsplit_once(':').unwrap().0, b.rsplit_once(':').unwrap().0, "same base");
-    assert!(a.ends_with(":0") && b.ends_with(":1"), "{a} / {b}");
+    assert_eq!(f[0].id, f[1].id, "twins are not numbered");
+    assert!(!f[0].id.contains(':'));
+    let baseline = baseline_of(&f);
+    assert_eq!(baseline.len(), 1);
+    assert_eq!(baseline[&f[0].id].count, 2);
 }
 
 #[test]
-fn c02_fixing_either_twin_removes_exactly_one_id() {
+fn c02_fixing_either_twin_removes_exactly_one_finding() {
     let before = scan(&[(APP, TWINS)], &twin_marks());
 
     let fixed_first = TWINS.replacen("legacy.value", "current.value", 1);
@@ -452,7 +462,7 @@ fn c02_fixing_either_twin_removes_exactly_one_id() {
     let idx = fixed_second.rfind("legacy.value").unwrap();
     fixed_second.replace_range(idx..idx + "legacy.value".len(), "current.value");
 
-    // The analyzer now reports only the remaining twin, which takes over `:0`.
+    // The analyzer now reports only the remaining twin.
     for fixed in [fixed_first, fixed_second] {
         let after = scan(&[(APP, &fixed)], &[mark(APP, "legacy.value")]);
         assert_rekeyed(&before, &after, 0, 1);
@@ -473,26 +483,52 @@ fn c04_same_line_same_rule_different_columns() {
     let marks = [mark(APP, "missing").col(11), mark(APP, "missing").col(21)];
     let f = scan(&[(APP, src)], &marks);
     assert_eq!(f.len(), 2);
-    assert_ne!(f[0].id, f[1].id);
+    assert_eq!(f[0].id, f[1].id);
     let g = scan(&[(APP, src)], &[marks[1].clone(), marks[0].clone()]);
     assert_stable(&f, &g);
+    // Dropping one of them is one finding removed.
+    assert_rekeyed(&f, &scan(&[(APP, src)], &marks[..1]), 0, 1);
 }
 
 #[test]
-fn c05_twins_in_different_files_do_not_share_counters() {
+fn c05_twins_in_different_files_are_separate_groups() {
     let marks = [mark(APP, "legacy.value"), mark(UTIL, "legacy.value")];
     let f = scan(&[(APP, TWINS), (UTIL, TWINS)], &marks);
     assert_eq!(f.len(), 2);
-    assert!(f.iter().all(|x| x.id.ends_with(":0")), "{f:?}");
+    assert_ne!(f[0].id, f[1].id);
+    assert!(baseline_of(&f).values().all(|e| e.count == 1));
+}
+
+#[test]
+fn c06_same_line_different_messages_are_separate_groups() {
+    let marks = [mark(APP, "missing").msg("first"), mark(APP, "missing").col(2).msg("second")];
+    let f = scan(&[(APP, "const v = missing;\n")], &marks);
     assert_ne!(f[0].id, f[1].id);
 }
 
 #[test]
-fn c06_same_line_different_messages_need_no_counter() {
-    let marks = [mark(APP, "missing").msg("first"), mark(APP, "missing").col(2).msg("second")];
-    let f = scan(&[(APP, "const v = missing;\n")], &marks);
-    assert!(f.iter().all(|x| x.id.ends_with(":0")), "{f:?}");
-    assert_ne!(f[0].id, f[1].id);
+fn c07_twin_inserted_between_twins_lists_the_whole_group() {
+    // Which of three identical findings is the new one cannot be told from content
+    // alone, so `check` reports the count and lists every location.
+    let between = TWINS.replacen(
+        "\nfunction b() {",
+        "\nfunction m() {\n  return legacy.value;\n}\n\nfunction b() {",
+        1,
+    );
+    let before = scan(&[(APP, TWINS)], &twin_marks());
+    let marks = [
+        mark(APP, "legacy.value"),
+        mark(APP, "legacy.value").nth(1),
+        mark(APP, "legacy.value").nth(2),
+    ];
+    let after = scan(&[(APP, &between)], &marks);
+
+    let d = deltas(&before, &after);
+    assert_eq!((new_count(&d), removed_count(&d)), (1, 0));
+    assert_eq!(
+        describe_new(&d),
+        [format!("{APP}  {RULE}  {MSG}  (1 new among 3 identical findings, lines 2, 6, 10)")]
+    );
 }
 
 // ===========================================================================
@@ -627,24 +663,18 @@ fn e01_golden_base_ids() {
 }
 
 #[test]
-fn e02_golden_final_ids_with_counters() {
+fn e02_golden_ids_of_twins() {
     let files = [(APP, TWINS)];
     let f = scan(&files, &twin_marks());
     let got: Vec<&str> = f.iter().map(|x| x.id.as_str()).collect();
-    assert_eq!(got, [
-            "34fabf62bd431cf4179a6d3102c6d820:0",
-            "34fabf62bd431cf4179a6d3102c6d820:1",
-        ]);
+    assert_eq!(got, ["34fabf62bd431cf4179a6d3102c6d820"; 2]);
 }
 
 #[test]
-fn e03_id_format_is_lowercase_hex_colon_counter() {
-    let f = scan(&[(APP, TWINS)], &twin_marks());
-    for finding in &f {
-        let (base, n) = finding.id.split_once(':').unwrap();
-        assert_eq!(base.len(), 32);
-        assert!(base.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')), "{base}");
-        assert!(n.parse::<usize>().is_ok());
+fn e03_id_format_is_32_lowercase_hex() {
+    for finding in &scan(&[(APP, TWINS)], &twin_marks()) {
+        assert_eq!(finding.id.len(), 32);
+        assert!(finding.id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')), "{}", finding.id);
     }
 }
 
@@ -668,4 +698,191 @@ fn e05_golden_normalize_message() {
         "see 'node_modules/@types/x/index.d.ts' here"
     );
     assert_eq!(normalize_message("  a \n\t b  ", root), "a b");
+}
+
+// ===========================================================================
+// F. Concurrent branches
+//
+// Two branches each run `gradual update --force` from the same baseline; their event
+// files are then merged (fold sums every event). Each branch is green on its own, so
+// the merged baseline must be as well. This is why twins are counted instead of
+// numbered: positional ids (`base:n`) let parallel branches reuse or remove the same
+// id for different lines, corrupting the merged baseline.
+// ===========================================================================
+
+const T0: &str = "2026-01-01T00:00:00Z";
+const T1: &str = "2026-01-01T01:00:00Z";
+const T2: &str = "2026-01-01T02:00:00Z";
+
+/// Scans `src` with one finding per `legacy.value` line.
+fn scan_twins(src: &str) -> Vec<Finding> {
+    let marks: Vec<Mark> = (0..src.matches("legacy.value").count())
+        .map(|n| mark(APP, "legacy.value").nth(n))
+        .collect();
+    scan(&[(APP, src)], &marks)
+}
+
+fn event(ts: &str, changes: Vec<Change>) -> DeltaEvent {
+    DeltaEvent {
+        version: EVENT_VERSION,
+        commit: "abc1234".into(),
+        parent: "def5678".into(),
+        timestamp: ts.into(),
+        changes,
+    }
+}
+
+fn genesis(src: &str) -> DeltaEvent {
+    event(T0, changes_for(&scan_twins(src), &HashMap::new()))
+}
+
+/// What `gradual update --force` on a branch at `history` would record for `src`.
+fn branch(history: &[DeltaEvent], src: &str, ts: &str) -> DeltaEvent {
+    event(ts, changes_for(&scan_twins(src), &fold(history)))
+}
+
+/// Number of findings `check` would report as new.
+fn new_on_check(baseline: &HashMap<String, Entry>, src: &str) -> u64 {
+    new_count(&diff(&group_by_id(scan_twins(src)), baseline))
+}
+
+fn fix_first(src: &str) -> String {
+    src.replacen("legacy.value", "current.value", 1)
+}
+
+fn fix_last(src: &str) -> String {
+    let mut out = src.to_string();
+    let idx = out.rfind("legacy.value").unwrap();
+    out.replace_range(idx..idx + "legacy.value".len(), "current.value");
+    out
+}
+
+fn add_twin(src: &str, name: &str) -> String {
+    format!("{src}\nfunction {name}() {{\n  return legacy.value;\n}}\n")
+}
+
+#[test]
+fn f00_sequential_branches_are_correct() {
+    // Control: the same kind of edits, merged one after the other.
+    let g = genesis(TWINS);
+    let after_x_src = fix_first(TWINS);
+    let x = branch(std::slice::from_ref(&g), &after_x_src, T1);
+    let final_src = add_twin(&after_x_src, "c");
+    let y = branch(&[g.clone(), x.clone()], &final_src, T2);
+
+    let merged = fold(&[g, x, y]);
+    assert_eq!(new_on_check(&merged, &final_src), 0);
+
+    // The baseline tracks exactly the two twins that remain accepted.
+    assert_eq!(new_on_check(&merged, &add_twin(&final_src, "d")), 1);
+}
+
+#[test]
+fn f01_parallel_fixes_of_different_twins() {
+    // X fixes twin A, Y fixes twin B: -1 and -1 from a baseline of 2.
+    let g = genesis(TWINS);
+    let x = branch(std::slice::from_ref(&g), &fix_first(TWINS), T1);
+    let y = branch(std::slice::from_ref(&g), &fix_last(TWINS), T2);
+    let merged = fold(&[g, x, y]);
+
+    let both_fixed = fix_last(&fix_first(TWINS));
+    assert_eq!(new_on_check(&merged, &both_fixed), 0);
+    assert!(merged.is_empty(), "phantom baseline entries: {merged:?}");
+
+    // With no twins accepted anymore, reintroducing one must fail `check`.
+    assert_eq!(new_on_check(&merged, &add_twin(&both_fixed, "c")), 1);
+}
+
+#[test]
+fn f02_parallel_fix_and_accepted_twin() {
+    // X fixes a twin (-1), Y accepts a new one (+1): the baseline stays at 2.
+    let g = genesis(TWINS);
+    let x_src = fix_first(TWINS);
+    let x = branch(std::slice::from_ref(&g), &x_src, T1);
+    let y = branch(std::slice::from_ref(&g), &add_twin(TWINS, "c"), T2);
+    let merged = fold(&[g, x, y]);
+
+    assert_eq!(new_on_check(&merged, &add_twin(&x_src, "c")), 0, "`check` must pass on main");
+}
+
+#[test]
+fn f03_parallel_accepted_twins() {
+    // X and Y each accept one new twin (+1 and +1): the baseline becomes 4.
+    let g = genesis(TWINS);
+    let x = branch(std::slice::from_ref(&g), &add_twin(TWINS, "c"), T1);
+    let y = branch(std::slice::from_ref(&g), &add_twin(TWINS, "d"), T2);
+    let merged = fold(&[g, x, y]);
+
+    let merged_src = add_twin(&add_twin(TWINS, "c"), "d");
+    assert_eq!(new_on_check(&merged, &merged_src), 0, "`check` must pass on main");
+}
+
+#[test]
+fn f04_merge_result_does_not_depend_on_event_order() {
+    let g = genesis(TWINS);
+    let x = branch(std::slice::from_ref(&g), &fix_first(TWINS), T1);
+    let y = branch(std::slice::from_ref(&g), &add_twin(TWINS, "c"), T2);
+    let counts = |events: &[DeltaEvent]| {
+        let mut v: Vec<_> = fold(events).into_iter().map(|(id, e)| (id, e.count)).collect();
+        v.sort();
+        v
+    };
+    let expected = counts(&[g.clone(), x.clone(), y.clone()]);
+    for perm in [[&g, &y, &x], [&x, &g, &y], [&x, &y, &g], [&y, &g, &x], [&y, &x, &g]] {
+        let events: Vec<DeltaEvent> = perm.iter().map(|e| (*e).clone()).collect();
+        assert_eq!(counts(&events), expected);
+    }
+}
+
+#[test]
+fn f05_known_limitation_both_branches_fix_the_same_twin() {
+    // Both branches fix twin A: -1 and -1 from 2 puts the baseline (0) below the
+    // code (1 twin left). Events for "same twin fixed twice" and "two different twins
+    // fixed" are identical, so this cannot be resolved silently without weakening the
+    // ratchet. `check` fails on main (loud, safe), says why, and `gradual update
+    // --force` records +1 and repairs the baseline.
+    let g = genesis(TWINS);
+    let fixed = fix_first(TWINS);
+    let x = branch(std::slice::from_ref(&g), &fixed, T1);
+    let y = branch(std::slice::from_ref(&g), &fixed, T2);
+    let merged = fold(&[g.clone(), x.clone(), y.clone()]);
+    assert_eq!(new_on_check(&merged, &fixed), 1);
+
+    let d = diff(&group_by_id(scan_twins(&fixed)), &merged);
+    let hint = concurrent_fix_hint(&d, &repeatedly_fixed_ids(&[g.clone(), x.clone(), y.clone()]));
+    assert!(hint.is_some_and(|h| h.contains("gradual update --force")));
+
+    let repair = branch(&[g.clone(), x.clone(), y.clone()], &fixed, "2026-01-01T03:00:00Z");
+    let repaired = fold(&[g, x, y, repair]);
+    assert_eq!(new_on_check(&repaired, &fixed), 0);
+}
+
+#[test]
+fn f06_no_hint_for_a_plain_regression() {
+    // A twin added after a single fix is a real regression: no concurrency hint.
+    let g = genesis(TWINS);
+    let fixed = fix_first(TWINS);
+    let x = branch(std::slice::from_ref(&g), &fixed, T1);
+    let merged = fold(&[g.clone(), x.clone()]);
+
+    let d = diff(&group_by_id(scan_twins(&add_twin(&fixed, "c"))), &merged);
+    assert_eq!(new_count(&d), 1);
+    assert!(concurrent_fix_hint(&d, &repeatedly_fixed_ids(&[g, x])).is_none());
+}
+
+#[test]
+fn f07_no_hint_when_a_single_finding_is_fixed_by_both_branches() {
+    // Not a twin group: the clamped sum is already right, so nothing to explain.
+    let one = ONE_TWIN;
+    let none = one.replace("legacy.value", "current.value");
+    let g = genesis(one);
+    let x = branch(std::slice::from_ref(&g), &none, T1);
+    let y = branch(std::slice::from_ref(&g), &none, T2);
+    let events = [g, x, y];
+    let merged = fold(&events);
+
+    assert_eq!(new_on_check(&merged, &none), 0);
+    let d = diff(&group_by_id(scan_twins(one)), &merged);
+    assert_eq!(new_count(&d), 1, "reintroducing it is a regression");
+    assert!(concurrent_fix_hint(&d, &repeatedly_fixed_ids(&events)).is_none());
 }

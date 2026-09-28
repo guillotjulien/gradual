@@ -3,16 +3,14 @@ pub mod hasher;
 use crate::analyzers::types::RawFinding;
 use crate::config::PathFilter;
 use crate::events::types::Finding;
-use hasher::{assign_counters, compute_block_id};
+use hasher::compute_block_id;
 use path_slash::PathExt;
 use std::path::Path;
 
-/// Converts raw findings into `Finding`s with stable, content-based ids.
-///
-/// Each id is a line-content hash (see `identity::hasher`) plus a `:n` occurrence
-/// counter. The counter is assigned over a deterministic source order (`file`,
-/// `line`, `column`, `rule`, `message`) so the *set* of ids is identical across runs
-/// even though analyzers emit findings in a nondeterministic order.
+/// Converts raw findings into `Finding`s with stable, content-based ids (see
+/// `identity::hasher`). Identical findings share an id. The output is sorted by
+/// (`file`, `line`, `column`, `rule`, `message`) so it is deterministic even though
+/// analyzers emit findings in a nondeterministic order.
 pub fn build_findings(raws: &[RawFinding], repo_root: &Path, filter: &PathFilter) -> Vec<Finding> {
     struct Pending<'a> {
         raw: &'a RawFinding,
@@ -64,16 +62,12 @@ pub fn build_findings(raws: &[RawFinding], repo_root: &Path, filter: &PathFilter
             ))
     });
 
-    let base_ids: Vec<String> = pending.iter().map(|p| p.base.clone()).collect();
-    let ids = assign_counters(&base_ids);
-
     pending
-        .iter()
-        .zip(ids)
-        .map(|(p, id)| Finding {
-            id,
+        .into_iter()
+        .map(|p| Finding {
+            id: p.base,
             rule: p.raw.rule.clone(),
-            file: p.rel.clone(),
+            file: p.rel,
             line: p.raw.line,
             message: p.raw.message.clone(),
         })
