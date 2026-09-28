@@ -1,21 +1,19 @@
 //! Stable finding identity ("fingerprint") for static-analysis findings.
 //!
-//! Identity is `hash(rule, file, normalized_message, forward_block)` plus a
-//! per-base-hash occurrence counter (`:n`), modeled on github/codeql-action's
-//! `fingerprints.ts`:
+//! Identity is `hash(rule, file, normalized_message, line_block)` plus a
+//! per-base-hash occurrence counter (`:n`):
 //!
-//!   - **`forward_block`** is the first `BLOCK_SIZE` non-whitespace characters
-//!     starting at the finding's line and spilling into following lines. Being
-//!     content-relative and whitespace-free, it survives reformatting and code
-//!     inserted *above* (or far below) the finding, while the surrounding context
-//!     keeps byte-identical lines in different places distinct.
+//!   - **`line_block`** is the whitespace-normalized text of the finding's own line.
+//!     Being content-relative, it survives code inserted or removed anywhere else
+//!     in the file, edits to neighbouring lines, re-indentation and CRLF/LF changes.
 //!   - **`normalized_message`** strips absolute paths so ids are stable per checkout.
 //!   - the **`:n` counter** (assigned by `assign_counters` in source order)
-//!     guarantees final uniqueness for the rare findings whose whole block matches.
+//!     tells apart findings whose base hashes match (e.g. identical lines).
 //!
-//! Trade-off: because the block includes following context, an edit *within* that
-//! window — or moving code so its trailing context changes — will change the id.
-//! That is the intended behavior (you touched the finding's surroundings).
+//! Trade-off: only the finding's own line is hashed, so editing that line, renaming
+//! the file, or changing the diagnostic changes the id. Identical lines in one file
+//! are distinguished by order alone, so fixing an earlier twin shifts the counters
+//! of later ones (as a set of ids the result is still stable).
 
 use crate::analyzers::types::RawFinding;
 use anyhow::Context;
@@ -54,15 +52,15 @@ pub fn normalize_message(message: &str, repo_root: &Path) -> String {
 }
 
 // ===========================================================================
-// Forward context block (à la codeql-action fingerprints.ts)
+// Line block
 // ===========================================================================
 
 /// Extracts only the normalized text of the finding's specific line.
-/// By ignoring subsequent lines, downstream edits (like adding a new property) 
-/// will never alter this finding's identity.
+/// By ignoring neighbouring lines, edits elsewhere in the file (like adding a new
+/// property) will never alter this finding's identity.
 pub fn line_block(source: &str, line: u32) -> String {
     let start = line.saturating_sub(1) as usize;
-    
+
     source
         .lines()
         .nth(start)

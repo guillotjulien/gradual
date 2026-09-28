@@ -25,6 +25,10 @@ name = "hasher_tests"
 path = "tests/identity/hasher_tests.rs"
 
 [[test]]
+name = "edit_scenarios_tests"
+path = "tests/identity/edit_scenarios_tests.rs"
+
+[[test]]
 name = "fold_tests"
 path = "tests/events/fold_tests.rs"
 

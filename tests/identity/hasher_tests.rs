@@ -11,7 +11,7 @@ fn finding_at(file: PathBuf, line: u32) -> RawFinding {
         rule: "ts:2304".to_string(),
         file,
         line,
-        column: 1, // unused by the content-block identity
+        column: 1, // unused by the line-content identity
         message: "Cannot find name 'x'".to_string(),
     }
 }
@@ -45,7 +45,7 @@ const BASE_LINE: u32 = 2;
 #[test]
 fn add_import_does_not_change_id() {
     // with_import.ts adds an `import` line at the top, shifting greet down. The
-    // forward block is unaffected by code inserted above → id must be stable.
+    // line content is unaffected by code inserted above → id must be stable.
     let dir = tempfile::tempdir().unwrap();
     let base_id = id_for_content("base.ts", BASE_LINE, dir.path());
     let shifted_id = id_for_content("with_import.ts", 4, dir.path());
@@ -80,8 +80,8 @@ fn different_file_changes_id() {
 
 #[test]
 fn distinct_lines_have_distinct_ids() {
-    // duplicated_line.ts lines 2 (`message`) and 3 (`message2`) differ in content
-    // and in forward context, so they get distinct base ids without a counter.
+    // duplicated_line.ts lines 2 (`message`) and 3 (`message2`) differ in content,
+    // so they get distinct base ids without a counter.
     let base_id = id_for_fixture("duplicated_line.ts", 2);
     let second_id = id_for_fixture("duplicated_line.ts", 3);
     assert_ne!(base_id, second_id, "Distinct lines should have distinct IDs");
@@ -89,7 +89,7 @@ fn distinct_lines_have_distinct_ids() {
 
 #[test]
 fn broken_syntax_does_not_error() {
-    // error_node.ts has invalid syntax; the block scheme does not parse, so it must
+    // error_node.ts has invalid syntax; the line-content scheme does not parse, so it must
     // still produce an id without error.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let finding = finding_at(fixtures_dir().join("error_node.ts"), 2);
@@ -159,7 +159,7 @@ fn abs_path_in_message_is_stable() {
 
 #[test]
 fn counter_disambiguates_identical_base_ids() {
-    // Findings whose entire block matches (true twins) fall back to the `:n` counter.
+    // Findings whose base ids match (true twins) fall back to the `:n` counter.
     let base = assign_counters(&[
         "aaa".to_string(),
         "aaa".to_string(),
